@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+  <meta charset="UTF-8">
+  <title>极简共享发帖</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f4f6fb; margin: 0; padding: 0; }
+    .container { max-width: 600px; margin: 40px auto; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px #0001; padding: 32px 24px; }
+    h1 { text-align: center; color: #3a3a3a; margin-bottom: 24px; }
+    form { display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px; }
+    input[type="file"] { border: 1px solid #ddd; border-radius: 6px; padding: 8px; }
+    textarea { resize: vertical; min-height: 60px; border: 1px solid #ddd; border-radius: 6px; padding: 8px; font-size: 1em; }
+    button { background: #4f8cff; color: #fff; border: none; border-radius: 6px; padding: 10px 0; font-size: 1.1em; cursor: pointer; transition: background 0.2s; }
+    button:hover { background: #2563eb; }
+    .post-list { margin-top: 2em; }
+    .post-card { background: #f9fafb; border-radius: 8px; box-shadow: 0 1px 4px #0001; margin-bottom: 18px; padding: 16px; }
+    .post-card img, .post-card video { max-width: 100%; border-radius: 6px; margin-top: 8px; }
+    .post-card .filename { color: #888; font-size: 0.95em; margin-top: 6px; }
+    .post-card .text-content { white-space: pre-wrap; color: #222; font-size: 1.08em; margin-top: 8px; }
+    @media (max-width: 700px) { .container { padding: 12px 2vw; } }
+  </style>
+</head>
+<body>
+  <div class="container" style="display: flex; gap: 32px;">
+    <aside style="width: 180px; min-width: 120px; background: #f0f3fa; border-radius: 10px; box-shadow: 0 1px 6px #0001; padding: 18px 10px 18px 16px; height: fit-content;">
+      <h2 style="font-size:1.1em; margin:0 0 12px 0; color:#4f8cff;">所有帖子</h2>
+      <ul id="sidebarList" style="list-style:none; padding:0; margin:0; max-height:70vh; overflow:auto;"></ul>
+    </aside>
+    <main style="flex:1;">
+      <h1>极简共享发帖</h1>
+      <form id="uploadForm">
+        <label>选择图片/视频/文件：<input type="file" name="file"></label>
+        <label>或输入文字内容：</label>
+        <textarea name="text" placeholder="在这里输入你的内容（支持纯文本发帖）"></textarea>
+        <button type="submit">发帖</button>
+      </form>
+      <div class="post-list" id="postList"></div>
+    </main>
+  </div>
+  <script>
+    // 上传文件或文字
+    document.getElementById('uploadForm').onsubmit = async function(e) {
+      e.preventDefault();
+      const fileInput = this.file;
+      const text = this.text.value.trim();
+      if (fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        const res = await fetch('/share/' + encodeURIComponent(file.name), {
+          method: 'PUT',
+          body: file
+        });
+        if (res.ok) {
+          alert('上传成功');
+          this.reset();
+          loadPosts();
+        } else {
+          alert('上传失败');
+        }
+      } else if (text) {
+        // 以时间戳命名txt文件
+        const filename = 'post_' + Date.now() + '.txt';
+        const blob = new Blob([text], {type: 'text/plain'});
+        const res = await fetch('/share/' + encodeURIComponent(filename), {
+          method: 'PUT',
+          body: blob
+        });
+        if (res.ok) {
+          alert('文字发帖成功');
+          this.reset();
+          loadPosts();
+        } else {
+          alert('发帖失败');
+        }
+      } else {
+        alert('请选择文件或输入内容');
+      }
+    };
+
+    // 加载所有帖子
+    async function loadPosts() {
+      const res = await fetch('/share/');
+      const text = await res.text();
+      // 解析nginx autoindex目录列表
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(text, 'text/html');
+      const links = Array.from(doc.querySelectorAll('a')).filter(a => !a.textContent.includes('Parent Directory'));
+      // 侧边栏列表
+      const sidebar = document.getElementById('sidebarList');
+      sidebar.innerHTML = '';
+      // 主内容区
+      const list = document.getElementById('postList');
+      list.innerHTML = '';
+      // 倒序显示（最新在前）
+      links.reverse();
+      links.forEach(link => {
+        const url = '/share/' + link.textContent;
+        // 侧边栏条目
+        let displayName = link.textContent;
+        if (/^post_\d+\.txt$/.test(displayName)) displayName = '文字帖 ' + displayName.replace('post_', '').replace('.txt', '');
+        const li = document.createElement('li');
+        li.style.marginBottom = '8px';
+        li.innerHTML = `<a href="#post-${encodeURIComponent(link.textContent)}" style="color:#2563eb;text-decoration:none;word-break:break-all;">${displayName}</a>`;
+        sidebar.appendChild(li);
+        // 主内容卡片
+        let card = `<div class="post-card" id="post-${encodeURIComponent(link.textContent)}">`;
+        if (/\.(jpg|jpeg|png|gif)$/i.test(url)) {
+          card += `<img src="${url}" alt="${link.textContent}">`;
+        } else if (/\.(mp4|webm|ogg)$/i.test(url)) {
+          card += `<video src="${url}" controls></video>`;
+        } else if (/\.txt$/i.test(url)) {
+          card += `<div class="filename">${link.textContent}</div>`;
+          card += `<div class="text-content" data-url="${url}">加载中...</div>`;
+        } else {
+          card += `<a href="${url}" target="_blank">${link.textContent}</a>`;
+        }
+        card += '</div>';
+        list.innerHTML += card;
+      });
+      // 加载txt内容
+      document.querySelectorAll('.text-content').forEach(async div => {
+        const res = await fetch(div.dataset.url);
+        if (res.ok) {
+          div.textContent = await res.text();
+        } else {
+          div.textContent = '[无法加载内容]';
+        }
+      });
+    }
+    loadPosts();
+  </script>
+</body>
+</html>
